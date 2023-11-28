@@ -534,26 +534,18 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
 #if defined(OPENSSL_IS_BORINGSSL) && defined(ALLOW_NONSTANDARD_EXPONENT)
     BIGNUM *d2 = BN_CTX_get(bn_ctx);
     if (d2 == NULL || BN_mod_inverse(d2, e2, phi, bn_ctx) == NULL) {
-        BN_free(d2);
         goto err;
     }
     CrtParams crt_params;
     if (crtparams_compute(bn_ctx, &crt_params, p, q, d2) != 0) {
-        BN_free(d2);
         goto err;
     }
 
-    RSA      *sk2 = RSA_new_private_key_large_e(n, e2, d2, p, q, crt_params.dmp1, crt_params.dmq1,
-                                                crt_params.iqmp);
-    BN_free(d2);
-    d2 = NULL;
+    RSA *sk2 = RSA_new_private_key_large_e(n, e2, d2, p, q, crt_params.dmp1, crt_params.dmq1,
+                                           crt_params.iqmp);
     if (sk2 == NULL) {
         goto err;
     }
-    n = e2 = d2 = p = q = NULL;
-    BN_free(crt_params.dmp1);
-    BN_free(crt_params.dmq1);
-    BN_free(crt_params.iqmp);
 
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
     if (evp_pkey == NULL || EVP_PKEY_assign_RSA(evp_pkey, sk2) != ERR_LIB_NONE) {
