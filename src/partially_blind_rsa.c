@@ -489,7 +489,6 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
 
     ret = 0;
     goto ret;
-
 err:
     EVP_PKEY_free(evp_pkey);
     BN_MONT_CTX_free(mont_ctx);
