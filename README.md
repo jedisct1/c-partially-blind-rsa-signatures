@@ -1,6 +1,6 @@
 # Partially blind RSA signatures
 
-This is an implementation of the [RSA Blind Signatures with Public Metadata](https://eprint.iacr.org/2023/1199) RFC, mechanically ported from [the Zig implementation](https://github.com/jedisct1/zig-rsa-blind-signatures).
+This is an implementation of the [RSA Blind Signatures with Public Metadata](https://eprint.iacr.org/2023/1199) paper and [draft](https://www.ietf.org/archive/id/draft-amjad-cfrg-partially-blind-rsa-01.html), mechanically ported from [the Zig implementation](https://github.com/jedisct1/zig-rsa-blind-signatures).
 
 ## Protocol overview
 
@@ -51,7 +51,7 @@ This implementation requires OpenSSL (1.1.x or 3.x.y) or BoringSSL.
     metadata.metadata     = (uint8_t *) "metadata";
     metadata.metadata_len = strlen((const char *) metadata.metadata);    
 
-    // Derive key pair for metadata
+    // Derive a key pair for the metadata
     // The client can derive the public key on its own using `pbrsa_derive_publickey_for_metadata()`
     PBRSASecretKey dsk;
     PBRSAPublicKey dpk;
@@ -150,5 +150,7 @@ All these functions return `0` on success and `-1` on error.
 ## Disclaimer
 
 This is just a proof of concept. Error handling may not be great, and it may leak memory. Using the original Zig implementation is recommended.
+
+This is slow, prone to DoS attacks and side-channel attacks. This protocol should only be used if key pairs need to be generated on demand.
 
 Using OpenSSL is recommended over BoringSSL, as it provides better performance for these operations.
