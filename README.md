@@ -22,6 +22,8 @@ Using that scheme, a server can issue a token and verify that a client has a val
 
 Random noise must be added to messages that don't include enough entropy. An optional "Message Randomizer" can be used for that purpose.
 
+The scheme was designed by Ghous Amjad, Kevin Yeo and Moti Yung.
+
 ## Dependencies
 
 This implementation requires OpenSSL (1.1.x or 3.x.y) or BoringSSL.
