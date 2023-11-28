@@ -151,6 +151,6 @@ All these functions return `0` on success and `-1` on error.
 
 This is just a proof of concept. Error handling may not be great, and it may leak memory. Using the original Zig implementation is recommended.
 
-This is slow, prone to DoS attacks and side-channel attacks. This protocol should only be used if key pairs need to be generated on demand.
+This is slow, prone to DoS and side-channel attacks. This protocol should only be used if key pairs need to be generated on demand.
 
 Using OpenSSL is recommended over BoringSSL, as it provides better performance for these operations.
