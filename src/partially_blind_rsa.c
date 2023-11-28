@@ -504,65 +504,62 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
                                   PBRSAPublicKey *dpk, const PBRSASecretKey *sk,
                                   const PBRSAPublicKey *pk, const PBRSAMetadata *metadata)
 {
+    int ret = -1;
+    // errdefer
+    BIGNUM *e2 = NULL;
+    BIGNUM *p  = NULL;
+    BIGNUM *q  = NULL;
+    // defer
+    BIGNUM *n      = NULL;
+    BN_CTX *bn_ctx = NULL;
+
     if (pbrsa_derive_publickey_for_metadata(context, dpk, pk, metadata) != 0) {
         return -1;
     }
-    BIGNUM *e2     = _rsa_e(dpk->evp_pkey);
-    BIGNUM *p      = _rsa_p(sk->evp_pkey);
-    BIGNUM *q      = _rsa_q(sk->evp_pkey);
-    BIGNUM *n      = _rsa_n(sk->evp_pkey);
-    BN_CTX *bn_ctx = BN_CTX_new();
+    e2     = _rsa_e(dpk->evp_pkey);
+    p      = _rsa_p(sk->evp_pkey);
+    q      = _rsa_q(sk->evp_pkey);
+    n      = _rsa_n(sk->evp_pkey);
+    bn_ctx = BN_CTX_new();
     if (e2 == NULL || p == NULL || q == NULL || n == NULL || bn_ctx == NULL) {
-        BN_free(e2);
-        BN_free(p);
-        BN_free(q);
-        BN_free(n);
-        BN_CTX_free(bn_ctx);
-        pbrsa_publickey_deinit(dpk);
-        return -1;
+        goto err;
     }
     BN_CTX_start(bn_ctx);
 
     BIGNUM *phi = get_phi(bn_ctx, p, q);
+    if (phi == NULL) {
+        goto err;
+    }
 
 #if defined(OPENSSL_IS_BORINGSSL) && defined(ALLOW_NONSTANDARD_EXPONENT)
     BIGNUM *d2 = BN_CTX_get(bn_ctx);
     if (d2 == NULL || BN_mod_inverse(d2, e2, phi, bn_ctx) == NULL) {
-        BN_free(e2);
-        BN_free(p);
-        BN_free(q);
-        BN_free(n);
-        BN_CTX_end(bn_ctx);
-        BN_CTX_free(bn_ctx);
-        pbrsa_publickey_deinit(dpk);
-        return -1;
+        BN_free(d2);
+        goto err;
     }
     CrtParams crt_params;
     if (crtparams_compute(bn_ctx, &crt_params, p, q, d2) != 0) {
-        BN_free(e2);
-        BN_free(p);
-        BN_free(q);
-        BN_free(n);
-        BN_CTX_end(bn_ctx);
-        BN_CTX_free(bn_ctx);
-        pbrsa_publickey_deinit(dpk);
-        return -1;
+        BN_free(d2);
+        goto err;
     }
 
     RSA      *sk2 = RSA_new_private_key_large_e(n, e2, d2, p, q, crt_params.dmp1, crt_params.dmq1,
                                                 crt_params.iqmp);
+    BN_free(d2);
+    d2 = NULL;
+    if (sk2 == NULL) {
+        goto err;
+    }
+    n = e2 = d2 = p = q = NULL;
+    BN_free(crt_params.dmp1);
+    BN_free(crt_params.dmq1);
+    BN_free(crt_params.iqmp);
+
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
-    if (sk2 == NULL || evp_pkey == NULL || EVP_PKEY_assign_RSA(evp_pkey, sk2) != ERR_LIB_NONE) {
+    if (evp_pkey == NULL || EVP_PKEY_assign_RSA(evp_pkey, sk2) != ERR_LIB_NONE) {
         RSA_free(sk2);
         EVP_PKEY_free(evp_pkey);
-        BN_free(e2);
-        BN_free(p);
-        BN_free(q);
-        BN_free(n);
-        BN_CTX_end(bn_ctx);
-        BN_CTX_free(bn_ctx);
-        pbrsa_publickey_deinit(dpk);
-        return -1;
+        goto err;
     }
     dsk->evp_pkey = evp_pkey;
 #else
@@ -572,28 +569,41 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
     if (evp_pkey == NULL || EVP_PKEY_assign_RSA(evp_pkey, sk2) != ERR_LIB_NONE ||
         BN_mod_inverse(d2, e2, phi, bn_ctx) == NULL ||
-        RSA_set0_factors(sk2, p, q) != ERR_LIB_NONE ||
-        RSA_set0_key(sk2, sk2_n, e2, d2) != ERR_LIB_NONE) {
-        BN_free(e2);
-        BN_free(p);
-        BN_free(q);
-        BN_free(n);
+        RSA_set0_factors(sk2, p, q) != ERR_LIB_NONE) {
         BN_free(sk2_n);
         BN_free(d2);
-        BN_CTX_end(bn_ctx);
+        RSA_free(sk2);
         EVP_PKEY_free(evp_pkey);
-        BN_CTX_free(bn_ctx);
-        pbrsa_publickey_deinit(dpk);
-        return -1;
+        goto err;
     }
+    p = q = NULL;
+    if (RSA_set0_key(sk2, sk2_n, e2, d2) != ERR_LIB_NONE) {
+        BN_free(sk2_n);
+        BN_free(d2);
+        RSA_free(sk2);
+        EVP_PKEY_free(evp_pkey);
+        goto err;
+    }
+    sk2_n = e2 = d2 = NULL;
     dsk->evp_pkey = evp_pkey;
 #endif
 
+    ret = 0;
+    goto ret;
+err:
+    if (dpk->evp_pkey != NULL) {
+        pbrsa_publickey_deinit(dpk);
+        dpk->evp_pkey = NULL;
+    }
+    BN_free(e2);
+    BN_free(p);
+    BN_free(q);
+ret:
     BN_free(n);
     BN_CTX_end(bn_ctx);
     BN_CTX_free(bn_ctx);
 
-    return 0;
+    return ret;
 }
 
 int
