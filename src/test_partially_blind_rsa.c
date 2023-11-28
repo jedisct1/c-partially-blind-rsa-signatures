@@ -52,12 +52,20 @@ test_default(void)
     assert(pbrsa_blind_sign(&context, &blind_sig, &dsk, &blind_msg) == 0);
     pbrsa_blind_message_deinit(&blind_msg);
 
+    // [CLIENT]: later, when the client wants to redeem a signed blind message,
+    // using the blinding secret, it can locally compute the signature of the
+    // original message.
+    // The client then owns a new valid (message, signature) pair, and the
+    // server cannot link it to a previous(blinded message, blind signature) pair.
+    // Note that the finalization function also verifies that the signature is
+    // correct for the server public key.
     PBRSASignature sig;
     assert(pbrsa_finalize(&context, &sig, &blind_sig, &client_secret, msg_randomizer, &dpk, msg,
                           msg_len, &metadata) == 0);
     pbrsa_blind_signature_deinit(&blind_sig);
     pbrsa_blinding_secret_deinit(&client_secret);
 
+    // [SERVER]: a non-blind signature can be verified using the server's public key.
     assert(pbrsa_verify(&context, &sig, &dpk, msg_randomizer, msg, msg_len, &metadata) == 0);
     pbrsa_signature_deinit(&sig);
 

@@ -324,6 +324,8 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
         return -1;
     }
 
+    BN_CTX_end(bn_ctx);
+    BN_CTX_free(bn_ctx);
     BN_free(phi);
 
     sk->evp_pkey = NULL;
@@ -514,6 +516,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
         BN_free(p);
         BN_free(q);
         BN_free(n);
+        BN_CTX_end(bn_ctx);
         BN_CTX_free(bn_ctx);
         pbrsa_publickey_deinit(dpk);
         return -1;
@@ -524,6 +527,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
         BN_free(p);
         BN_free(q);
         BN_free(n);
+        BN_CTX_end(bn_ctx);
         BN_CTX_free(bn_ctx);
         pbrsa_publickey_deinit(dpk);
         return -1;
@@ -539,6 +543,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
         BN_free(p);
         BN_free(q);
         BN_free(n);
+        BN_CTX_end(bn_ctx);
         BN_CTX_free(bn_ctx);
         pbrsa_publickey_deinit(dpk);
         return -1;
@@ -559,6 +564,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
         BN_free(n);
         BN_free(sk2_n);
         BN_free(d2);
+        BN_CTX_end(bn_ctx);
         EVP_PKEY_free(evp_pkey);
         BN_CTX_free(bn_ctx);
         pbrsa_publickey_deinit(dpk);
@@ -566,6 +572,10 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     }
     dsk->evp_pkey = evp_pkey;
 #endif
+
+    BN_free(n);
+    BN_CTX_end(bn_ctx);
+    BN_CTX_free(bn_ctx);
 
     return 0;
 }
@@ -849,12 +859,17 @@ _blind(PBRSABlindMessage *blind_message, PBRSABlindingSecret *secret_, PBRSAPubl
         return -1;
     }
 
+    BIGNUM *n = _rsa_n(pk->evp_pkey);
+    if (n == NULL) {
+        return -1;
+    }
+
     // Check that gcd(m, n) == 1
     BIGNUM *gcd = BN_CTX_get(bn_ctx);
     if (gcd == NULL) {
         return -1;
     }
-    BN_gcd(gcd, m, _rsa_n(pk->evp_pkey), bn_ctx);
+    BN_gcd(gcd, m, n, bn_ctx);
     if (BN_is_one(gcd) == 0) {
         return -1;
     }
@@ -864,10 +879,6 @@ _blind(PBRSABlindMessage *blind_message, PBRSABlindingSecret *secret_, PBRSAPubl
     BIGNUM *secret_inv = BN_CTX_get(bn_ctx);
     BIGNUM *secret     = BN_CTX_get(bn_ctx);
     if (secret_inv == NULL || secret == NULL) {
-        return -1;
-    }
-    BIGNUM *n = _rsa_n(pk->evp_pkey);
-    if (n == NULL) {
         return -1;
     }
     do {
