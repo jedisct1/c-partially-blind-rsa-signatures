@@ -131,68 +131,80 @@ typedef struct CrtParams {
 static int
 mod_inverse_secret_prime(BN_CTX *bn_ctx, BIGNUM *res, const BIGNUM *a, const BIGNUM *p)
 {
+    int ret = -1;
+
     BN_MONT_CTX *mont_ctx = new_mont_domain(p);
     if (mont_ctx == NULL) {
-        return -1;
+        goto err;
     }
     BIGNUM *pm2 = BN_CTX_get(bn_ctx);
     if (pm2 == NULL || BN_copy(pm2, p) == NULL || BN_sub_word(pm2, 2) != ERR_LIB_NONE) {
-        BN_MONT_CTX_free(mont_ctx);
-        return -1;
+        goto err;
     }
     BIGNUM *a_reduced = BN_CTX_get(bn_ctx);
     if (a_reduced == NULL || BN_copy(a_reduced, a) == NULL) {
-        BN_MONT_CTX_free(mont_ctx);
-        return -1;
+        goto err;
     }
     while (BN_ucmp(a_reduced, p) >= 0) {
         if (BN_usub(a_reduced, a_reduced, p) != ERR_LIB_NONE) {
-            BN_MONT_CTX_free(mont_ctx);
-            return -1;
+            goto err;
         }
     }
     if (BN_mod_exp_mont_consttime(res, a_reduced, pm2, p, bn_ctx, mont_ctx) != ERR_LIB_NONE) {
-        BN_MONT_CTX_free(mont_ctx);
-        return -1;
+        goto err;
     }
-    return 0;
+    ret = 0;
+
+err:
+ret:
+    BN_MONT_CTX_free(mont_ctx);
+
+    return ret;
 }
 
 static int
 crtparams_compute(BN_CTX *bn_ctx, CrtParams *crt_params, const BIGNUM *p, const BIGNUM *q,
                   const BIGNUM *d)
 {
+    int ret = -1;
+
+    // errdefer
+    BIGNUM *dmp1 = NULL;
+    BIGNUM *dmq1 = NULL;
+    BIGNUM *iqmp = NULL;
+
     BIGNUM *pm1 = BN_CTX_get(bn_ctx);
     BIGNUM *qm1 = BN_CTX_get(bn_ctx);
     if (pm1 == NULL || qm1 == NULL) {
-        return -1;
+        goto err;
     }
     if (BN_usub(pm1, p, BN_value_one()) != ERR_LIB_NONE ||
         BN_usub(qm1, q, BN_value_one()) != ERR_LIB_NONE) {
-        return -1;
+        goto err;
     }
-    BIGNUM *dmp1 = BN_new();
-    BIGNUM *dmq1 = BN_new();
-    BIGNUM *iqmp = BN_new();
+    dmp1 = BN_new();
+    dmq1 = BN_new();
+    iqmp = BN_new();
     if (dmp1 == NULL || dmq1 == NULL || iqmp == NULL) {
-        BN_free(dmp1);
-        BN_free(dmq1);
-        BN_free(iqmp);
-        return -1;
+        goto err;
     }
     if (BN_div(NULL, dmp1, d, pm1, bn_ctx) != ERR_LIB_NONE ||
         BN_div(NULL, dmq1, d, qm1, bn_ctx) != ERR_LIB_NONE ||
         mod_inverse_secret_prime(bn_ctx, iqmp, q, p) != 0) {
-        BN_free(dmp1);
-        BN_free(dmq1);
-        BN_free(iqmp);
-        return -1;
+        goto err;
     }
     crt_params->dmp1 = dmp1;
     crt_params->dmq1 = dmq1;
     crt_params->iqmp = iqmp;
 
-    return 0;
+    ret = 0;
+    goto ret;
+err:
+    BN_free(dmp1);
+    BN_free(dmq1);
+    BN_free(iqmp);
+ret:
+    return ret;
 }
 #endif
 
@@ -277,82 +289,96 @@ get_phi(BN_CTX *bn_ctx, const BIGNUM *p, const BIGNUM *q)
 int
 pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
 {
-    BIGNUM *p = BN_new();
-    BIGNUM *q = BN_new();
+    int ret = -1;
+
+    // errdefer
+    BIGNUM *p    = NULL;
+    BIGNUM *q    = NULL;
+    BIGNUM *n    = NULL;
+    BIGNUM *e    = NULL;
+    BIGNUM *d    = NULL;
+    RSA    *rsa  = NULL;
+    sk->evp_pkey = NULL;
+    pk->evp_pkey = NULL;
+    // defer
+    BN_CTX *bn_ctx = NULL;
+
+    p = BN_new();
+    q = BN_new();
     if (p == NULL || q == NULL) {
-        return -1;
+        goto err;
     }
     const int safe = 1;
-    int       ok   = 0;
     for (;;) {
         if (BN_generate_prime_ex(p, modulus_bits / 2, safe, NULL, NULL, NULL) != ERR_LIB_NONE ||
             BN_generate_prime_ex(q, modulus_bits / 2, safe, NULL, NULL, NULL) != ERR_LIB_NONE) {
-            break;
+            goto err;
         }
         if (BN_cmp(p, q) != 0) {
-            ok = 1;
             break;
         }
     }
-    if (ok == 0) {
-        BN_free(p);
-        BN_free(q);
-        return -1;
-    }
-    BN_CTX *bn_ctx = BN_CTX_new();
+
+    bn_ctx = BN_CTX_new();
     if (bn_ctx == NULL) {
-        BN_free(p);
-        BN_free(q);
-        return -1;
+        goto err;
     }
     BN_CTX_start(bn_ctx);
 
     BIGNUM *phi = get_phi(bn_ctx, p, q);
-    BIGNUM *n   = BN_new();
-    BIGNUM *e   = BN_new();
-    BIGNUM *d   = BN_new();
+    n           = BN_new();
+    e           = BN_new();
+    d           = BN_new();
     if (phi == NULL || n == NULL || BN_mul(n, p, q, bn_ctx) != ERR_LIB_NONE ||
         BN_set_word(e, RSA_F4) != ERR_LIB_NONE || BN_mod_inverse(d, e, phi, bn_ctx) == NULL) {
-        BN_CTX_end(bn_ctx);
-        BN_CTX_free(bn_ctx);
-        BN_free(p);
-        BN_free(q);
-        BN_free(phi);
-        BN_free(n);
-        BN_free(e);
-        BN_free(d);
-        return -1;
+        goto err;
     }
-
-    BN_CTX_end(bn_ctx);
-    BN_CTX_free(bn_ctx);
-    BN_free(phi);
-
-    sk->evp_pkey = NULL;
-
     if (pk != NULL) {
         pk->evp_pkey = NULL;
         pk->mont_ctx = NULL;
     }
 
-    RSA *rsa = RSA_new();
+    rsa = RSA_new();
     if (rsa == NULL) {
-        return -1;
+        goto err;
     }
-    if (RSA_set0_key(rsa, n, e, d) != ERR_LIB_NONE || RSA_set0_factors(rsa, p, q) != ERR_LIB_NONE) {
-        RSA_free(rsa);
-        return -1;
+    if (RSA_set0_key(rsa, n, e, d) != ERR_LIB_NONE) {
+        goto err;
     }
+    n = e = d = NULL;
+    if (RSA_set0_factors(rsa, p, q) != ERR_LIB_NONE) {
+        goto err;
+    }
+    p = q = NULL;
     if ((sk->evp_pkey = EVP_PKEY_new()) == NULL) {
-        RSA_free(rsa);
-        return -1;
+        goto err;
     }
     EVP_PKEY_assign_RSA(sk->evp_pkey, rsa);
+    rsa = NULL;
 
     if (pk != NULL) {
-        return pbrsa_publickey_recover(pk, sk);
+        if (pbrsa_publickey_recover(pk, sk) != 0) {
+            goto err;
+        }
     }
-    return 0;
+
+    ret = 0;
+    goto ret;
+err:
+    BN_free(p);
+    BN_free(q);
+    BN_free(n);
+    BN_free(e);
+    BN_free(d);
+    RSA_free(rsa);
+    EVP_PKEY_free(sk->evp_pkey);
+    EVP_PKEY_free(pk->evp_pkey);
+ret:
+    if (bn_ctx != NULL) {
+        BN_CTX_end(bn_ctx);
+        BN_CTX_free(bn_ctx);
+    }
+    return ret;
 }
 
 int
