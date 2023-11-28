@@ -153,8 +153,9 @@ mod_inverse_secret_prime(BN_CTX *bn_ctx, BIGNUM *res, const BIGNUM *a, const BIG
     if (BN_mod_exp_mont_consttime(res, a_reduced, pm2, p, bn_ctx, mont_ctx) != ERR_LIB_NONE) {
         goto err;
     }
-    ret = 0;
 
+    ret = 0;
+    goto ret;
 err:
 ret:
     BN_MONT_CTX_free(mont_ctx);
