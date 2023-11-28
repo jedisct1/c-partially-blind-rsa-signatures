@@ -62,7 +62,7 @@ This implementation requires OpenSSL (1.1.x or 3.x.y) or BoringSSL.
     uint8_t             msg[32];
     const size_t        msg_len = sizeof msg;
     PBRSABlindMessage   blind_msg;
-    pBRSABlindingSecret client_secret;
+    PBRSABlindingSecret client_secret;
     assert(pbrsa_blind_message_generate(&context, &blind_msg, msg, msg_len, &client_secret, &dpk,
                                         &metadata) == 0);
 
