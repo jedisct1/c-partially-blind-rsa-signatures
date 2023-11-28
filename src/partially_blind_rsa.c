@@ -354,7 +354,6 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
         goto err;
     }
     EVP_PKEY_assign_RSA(sk->evp_pkey, rsa);
-    rsa = NULL;
 
     if (pk != NULL) {
         if (pbrsa_publickey_recover(pk, sk) != 0) {
@@ -385,13 +384,22 @@ int
 pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey *dpk,
                                     const PBRSAPublicKey *pk, const PBRSAMetadata *metadata)
 {
+    int ret = -1;
+    // errdefer
+    EVP_PKEY    *evp_pkey = NULL;
+    BN_MONT_CTX *mont_ctx = NULL;
+    // defer
+    unsigned char *hkdf_input_raw = NULL;
+    BIGNUM        *n              = NULL;
+    EVP_PKEY_CTX  *pkey_ctx       = NULL;
+
     dpk->evp_pkey = NULL;
     dpk->mont_ctx = NULL;
 
     const size_t   hkdf_input_len = (sizeof "key" - 1U) + metadata->metadata_len + 1U;
-    unsigned char *hkdf_input_raw = OPENSSL_malloc(hkdf_input_len);
+    hkdf_input_raw                = OPENSSL_malloc(hkdf_input_len);
     if (hkdf_input_raw == NULL) {
-        return -1;
+        goto err;
     }
     memcpy(hkdf_input_raw, "key", sizeof "key" - 1U);
     memcpy(hkdf_input_raw + (sizeof "key" - 1U), metadata->metadata, metadata->metadata_len);
@@ -400,52 +408,37 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
     unsigned char hkdf_salt[MAX_MODULUS_BITS / 8U];
     const size_t  hkdf_salt_len = _rsa_size(pk->evp_pkey);
     if (hkdf_input_len > hkdf_salt_len) {
-        OPENSSL_free(hkdf_input_raw);
-        return -1;
+        goto err;
     }
-    BIGNUM *n = _rsa_n(pk->evp_pkey);
+    n = _rsa_n(pk->evp_pkey);
     if (BN_bn2bin_padded(hkdf_salt, hkdf_salt_len, n) != ERR_LIB_NONE) {
-        OPENSSL_free(hkdf_input_raw);
-        BN_free(n);
-        return -1;
+        goto err;
     }
 
     const size_t lambda_len = _rsa_size(pk->evp_pkey) / 2;
     const size_t hkdf_len   = lambda_len + 16;
 
-    const unsigned char info[]   = { 'P', 'B', 'R', 'S', 'A' };
-    EVP_PKEY_CTX       *pkey_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+    const unsigned char info[] = { 'P', 'B', 'R', 'S', 'A' };
+    pkey_ctx                   = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
     if (pkey_ctx == NULL) {
-        OPENSSL_free(hkdf_input_raw);
-        BN_free(n);
-        return -1;
+        goto err;
     }
     if (EVP_PKEY_derive_init(pkey_ctx) != ERR_LIB_NONE ||
         EVP_PKEY_CTX_set_hkdf_md(pkey_ctx, context->evp_md) != ERR_LIB_NONE ||
         EVP_PKEY_CTX_set1_hkdf_salt(pkey_ctx, hkdf_salt, hkdf_salt_len) != ERR_LIB_NONE ||
         EVP_PKEY_CTX_set1_hkdf_key(pkey_ctx, hkdf_input_raw, hkdf_input_len) != ERR_LIB_NONE ||
         EVP_PKEY_CTX_add1_hkdf_info(pkey_ctx, info, sizeof info - 1U) != ERR_LIB_NONE) {
-        OPENSSL_free(hkdf_input_raw);
-        EVP_PKEY_CTX_free(pkey_ctx);
-        BN_free(n);
-        return -1;
+        goto err;
     }
-    OPENSSL_free(hkdf_input_raw);
 
     unsigned char exp_bytes[MAX_MODULUS_BITS / 16 + 16];
     if (hkdf_len <= 0 || hkdf_len > sizeof exp_bytes) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        BN_free(n);
-        return -1;
+        goto err;
     }
     size_t exp_bytes_len = hkdf_len;
     if (EVP_PKEY_derive(pkey_ctx, exp_bytes, &exp_bytes_len) != ERR_LIB_NONE) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        BN_free(n);
-        return -1;
+        goto err;
     }
-
-    EVP_PKEY_CTX_free(pkey_ctx);
 
     exp_bytes[0] &= 0x3f;
     exp_bytes[lambda_len - 1] |= 0x01;
@@ -454,61 +447,56 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
 #if defined(OPENSSL_IS_BORINGSSL) && defined(ALLOW_NONSTANDARD_EXPONENT)
     BIGNUM *e2 = BN_new();
     if (e2 == NULL || BN_bin2bn(exp_bytes, lambda_len, e2) == NULL) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        BN_free(n);
         BN_free(e2);
-        return -1;
+        goto err;
     }
     pk2 = RSA_new_public_key_large_e(n, e2);
-    BN_free(n);
     if (pk2 == NULL) {
-        EVP_PKEY_CTX_free(pkey_ctx);
         BN_free(e2);
-        return -1;
+        goto err;
     }
 #else
     BIGNUM *e2 = BN_new();
     if (e2 == NULL || BN_bin2bn(exp_bytes, lambda_len, e2) == NULL) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        BN_free(n);
         BN_free(e2);
-        return -1;
+        goto err;
     }
     pk2 = RSA_new();
     if (pk2 == NULL || RSA_set0_key(pk2, n, e2, NULL) != ERR_LIB_NONE) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        BN_free(n);
         BN_free(e2);
-        RSA_free(pk2);
-        return -1;
+        goto err;
     }
+    n = e2 = NULL;
 #endif
 
-    EVP_PKEY *evp_pkey = EVP_PKEY_new();
+    evp_pkey = EVP_PKEY_new();
     if (evp_pkey == NULL) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        RSA_free(pk2);
-        return -1;
+        goto err;
     }
     EVP_PKEY_assign_RSA(evp_pkey, pk2);
 
-    BN_MONT_CTX *mont_ctx = BN_MONT_CTX_new();
+    mont_ctx = BN_MONT_CTX_new();
     if (mont_ctx == NULL) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        EVP_PKEY_free(evp_pkey);
-        return -1;
+        goto err;
     }
     if (BN_MONT_CTX_copy(mont_ctx, pk->mont_ctx) == NULL) {
-        EVP_PKEY_CTX_free(pkey_ctx);
-        EVP_PKEY_free(evp_pkey);
-        BN_MONT_CTX_free(mont_ctx);
-        return -1;
+        goto err;
     }
 
     dpk->evp_pkey = evp_pkey;
     dpk->mont_ctx = mont_ctx;
 
-    return 0;
+    ret = 0;
+    goto ret;
+
+err:
+    EVP_PKEY_free(evp_pkey);
+    BN_MONT_CTX_free(mont_ctx);
+ret:
+    OPENSSL_free(hkdf_input_raw);
+    BN_free(n);
+    EVP_PKEY_CTX_free(pkey_ctx);
+    return ret;
 }
 
 int
