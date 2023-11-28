@@ -419,6 +419,8 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
         return -1;
     }
 
+    EVP_PKEY_CTX_free(pkey_ctx);
+
     exp_bytes[0] &= 0x3f;
     exp_bytes[lambda_len - 1] |= 0x01;
 
@@ -867,10 +869,12 @@ _blind(PBRSABlindMessage *blind_message, PBRSABlindingSecret *secret_, PBRSAPubl
     // Check that gcd(m, n) == 1
     BIGNUM *gcd = BN_CTX_get(bn_ctx);
     if (gcd == NULL) {
+        BN_free(n);
         return -1;
     }
     BN_gcd(gcd, m, n, bn_ctx);
     if (BN_is_one(gcd) == 0) {
+        BN_free(n);
         return -1;
     }
 
