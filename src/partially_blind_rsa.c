@@ -855,7 +855,8 @@ _hash(const EVP_MD *evp_md, const PBRSAMessageRandomizer *prefix, uint8_t *msg_h
                 break;
             }
         }
-        if (prefix != NULL && EVP_DigestUpdate(hash_ctx, msg, msg_len) != ERR_LIB_NONE) {
+        if (prefix != NULL &&
+            EVP_DigestUpdate(hash_ctx, prefix->noise, sizeof prefix->noise) != ERR_LIB_NONE) {
             break;
         }
         if (EVP_DigestUpdate(hash_ctx, msg, msg_len) != ERR_LIB_NONE ||
