@@ -397,8 +397,8 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
     dpk->evp_pkey = NULL;
     dpk->mont_ctx = NULL;
 
-    const size_t   hkdf_input_len = (sizeof "key" - 1U) + metadata->metadata_len + 1U;
-    hkdf_input_raw                = OPENSSL_malloc(hkdf_input_len);
+    const size_t hkdf_input_len = (sizeof "key" - 1U) + metadata->metadata_len + 1U;
+    hkdf_input_raw              = OPENSSL_malloc(hkdf_input_len);
     if (hkdf_input_raw == NULL) {
         goto err;
     }
@@ -419,8 +419,8 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
     const size_t lambda_len = _rsa_size(pk->evp_pkey) / 2;
     const size_t hkdf_len   = lambda_len + 16;
 
-    const unsigned char info[] = { 'P', 'B', 'R', 'S', 'A' };
-    pkey_ctx                   = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+    const char info[] = "PBRSA";
+    pkey_ctx          = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
     if (pkey_ctx == NULL) {
         goto err;
     }
@@ -428,7 +428,8 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
         EVP_PKEY_CTX_set_hkdf_md(pkey_ctx, context->evp_md) != ERR_LIB_NONE ||
         EVP_PKEY_CTX_set1_hkdf_salt(pkey_ctx, hkdf_salt, hkdf_salt_len) != ERR_LIB_NONE ||
         EVP_PKEY_CTX_set1_hkdf_key(pkey_ctx, hkdf_input_raw, hkdf_input_len) != ERR_LIB_NONE ||
-        EVP_PKEY_CTX_add1_hkdf_info(pkey_ctx, info, sizeof info - 1U) != ERR_LIB_NONE) {
+        EVP_PKEY_CTX_add1_hkdf_info(pkey_ctx, (const uint8_t *) info, sizeof info - 1U) !=
+            ERR_LIB_NONE) {
         goto err;
     }
 
@@ -577,7 +578,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
         goto err;
     }
     sk2_n = e2 = d2 = NULL;
-    dsk->evp_pkey = evp_pkey;
+    dsk->evp_pkey   = evp_pkey;
 #endif
 
     ret = 0;
