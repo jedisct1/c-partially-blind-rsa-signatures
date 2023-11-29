@@ -1,5 +1,5 @@
-#ifndef blind_rsa_H
-#define blind_rsa_H
+#ifndef partially_blind_rsa_H
+#define partially_blind_rsa_H
 #ifdef __cplusplus
 extern "C" {
 #endif
