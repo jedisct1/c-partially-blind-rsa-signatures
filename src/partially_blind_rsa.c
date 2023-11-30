@@ -300,7 +300,9 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
     BIGNUM *d    = NULL;
     RSA    *rsa  = NULL;
     sk->evp_pkey = NULL;
-    pk->evp_pkey = NULL;
+    if (pk != NULL) {
+        pk->evp_pkey = NULL;
+    }
     // defer
     BN_CTX *bn_ctx = NULL;
 
@@ -372,7 +374,9 @@ err:
     BN_free(d);
     RSA_free(rsa);
     EVP_PKEY_free(sk->evp_pkey);
-    EVP_PKEY_free(pk->evp_pkey);
+    if (pk != NULL) {
+        EVP_PKEY_free(pk->evp_pkey);
+    }
 ret:
     if (bn_ctx != NULL) {
         BN_CTX_end(bn_ctx);
