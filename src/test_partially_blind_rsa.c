@@ -17,7 +17,8 @@ test_default(void)
     PBRSAContext context;
     pbrsa_context_init_default(&context);
 
-    // [SERVER]: Generate a RSA-2048 key pair
+    // [SERVER]: Generate a PBRSA-2048 key pair
+    // Regular RSA and BRSA keys must not be used, as PBRSA has additional requirements.
     PBRSASecretKey sk;
     PBRSAPublicKey pk;
     assert(pbrsa_keypair_generate(&sk, &pk, 2048) == 0);
