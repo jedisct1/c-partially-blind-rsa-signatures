@@ -207,6 +207,17 @@ err:
 ret:
     return ret;
 }
+
+static void
+crtparams_free(CrtParams *crt_params)
+{
+    BN_free(crt_params->dmp1);
+    crt_params->dmp1 = NULL;
+    BN_free(crt_params->dmq1);
+    crt_params->dmq1 = NULL;
+    BN_free(crt_params->iqmp);
+    crt_params->iqmp = NULL;
+}
 #endif
 
 void
@@ -345,6 +356,19 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
     if (rsa == NULL) {
         goto err;
     }
+
+#if defined(OPENSSL_IS_BORINGSSL) && defined(ALLOW_NONSTANDARD_EXPONENT)
+    CrtParams crt_params;
+    if (crtparams_compute(bn_ctx, &crt_params, p, q, d) != 0) {
+        goto err;
+    }
+    if (RSA_set0_crt_params(rsa, crt_params.dmp1, crt_params.dmq1, crt_params.iqmp) !=
+        ERR_LIB_NONE) {
+        crtparams_free(&crt_params);
+        goto err;
+    }
+#endif
+
     if (RSA_set0_key(rsa, n, e, d) != ERR_LIB_NONE) {
         goto err;
     }
@@ -353,6 +377,7 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
         goto err;
     }
     p = q = NULL;
+
     if ((sk->evp_pkey = EVP_PKEY_new()) == NULL) {
         goto err;
     }
@@ -551,6 +576,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     RSA *sk2 = RSA_new_private_key_large_e(n, e2, d2, p, q, crt_params.dmp1, crt_params.dmq1,
                                            crt_params.iqmp);
     if (sk2 == NULL) {
+        crtparams_free(&crt_params);
         goto err;
     }
 
