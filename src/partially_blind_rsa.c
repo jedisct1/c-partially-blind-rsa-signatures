@@ -293,17 +293,17 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
     int ret = -1;
 
     // errdefer
-    BIGNUM *p    = NULL;
-    BIGNUM *q    = NULL;
-    BIGNUM *n    = NULL;
-    BIGNUM *e    = NULL;
-    BIGNUM *d    = NULL;
-    RSA    *rsa  = NULL;
-    sk->evp_pkey = NULL;
+    BIGNUM *p   = NULL;
+    BIGNUM *q   = NULL;
+    BIGNUM *n   = NULL;
+    BIGNUM *e   = NULL;
+    BIGNUM *d   = NULL;
+    RSA    *rsa = NULL;
     if (pk != NULL) {
         pk->evp_pkey = NULL;
     }
     // defer
+    sk->evp_pkey   = NULL;
     BN_CTX *bn_ctx = NULL;
 
     p = BN_new();
@@ -392,9 +392,9 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
 {
     int ret = -1;
     // errdefer
-    EVP_PKEY    *evp_pkey = NULL;
     BN_MONT_CTX *mont_ctx = NULL;
     // defer
+    EVP_PKEY      *evp_pkey       = NULL;
     unsigned char *hkdf_input_raw = NULL;
     BIGNUM        *n              = NULL;
     EVP_PKEY_CTX  *pkey_ctx       = NULL;
