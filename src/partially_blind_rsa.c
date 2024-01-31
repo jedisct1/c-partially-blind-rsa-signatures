@@ -356,6 +356,7 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
     if ((sk->evp_pkey = EVP_PKEY_new()) == NULL) {
         goto err;
     }
+    EVP_PKEY_up_ref(sk->evp_pkey);
     EVP_PKEY_assign(sk->evp_pkey, EVP_PKEY_RSA, rsa);
 
     if (pk != NULL) {
@@ -373,11 +374,11 @@ err:
     BN_free(e);
     BN_free(d);
     RSA_free(rsa);
-    EVP_PKEY_free(sk->evp_pkey);
     if (pk != NULL) {
         EVP_PKEY_free(pk->evp_pkey);
     }
 ret:
+    EVP_PKEY_free(sk->evp_pkey);
     if (bn_ctx != NULL) {
         BN_CTX_end(bn_ctx);
         BN_CTX_free(bn_ctx);
@@ -479,6 +480,7 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
     if (evp_pkey == NULL) {
         goto err;
     }
+    EVP_PKEY_up_ref(evp_pkey);
     EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, pk2);
 
     mont_ctx = BN_MONT_CTX_new();
@@ -495,9 +497,9 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
     ret = 0;
     goto ret;
 err:
-    EVP_PKEY_free(evp_pkey);
     BN_MONT_CTX_free(mont_ctx);
 ret:
+    EVP_PKEY_free(evp_pkey);
     OPENSSL_free(hkdf_input_raw);
     BN_free(n);
     EVP_PKEY_CTX_free(pkey_ctx);
@@ -553,9 +555,9 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     }
 
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
-    if (evp_pkey == NULL || EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE) {
+    if (evp_pkey == NULL || EVP_PKEY_up_ref(evp_pkey) != ERR_LIB_NONE ||
+        EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE) {
         RSA_free(sk2);
-        EVP_PKEY_free(evp_pkey);
         goto err;
     }
     dsk->evp_pkey = evp_pkey;
@@ -564,13 +566,13 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     BIGNUM   *d2       = BN_new();
     RSA      *sk2      = RSA_new();
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
-    if (evp_pkey == NULL || EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE ||
+    if (evp_pkey == NULL || EVP_PKEY_up_ref(evp_pkey) != ERR_LIB_NONE ||
+        EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE ||
         BN_mod_inverse(d2, e2, phi, bn_ctx) == NULL ||
         RSA_set0_factors(sk2, p, q) != ERR_LIB_NONE) {
         BN_free(sk2_n);
         BN_free(d2);
         RSA_free(sk2);
-        EVP_PKEY_free(evp_pkey);
         goto err;
     }
     p = q = NULL;
@@ -596,6 +598,7 @@ err:
     BN_free(p);
     BN_free(q);
 ret:
+    EVP_PKEY_free(evp_pkey);
     BN_free(n);
     BN_CTX_end(bn_ctx);
     BN_CTX_free(bn_ctx);
