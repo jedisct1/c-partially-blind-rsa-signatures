@@ -356,7 +356,7 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
     if ((sk->evp_pkey = EVP_PKEY_new()) == NULL) {
         goto err;
     }
-    EVP_PKEY_assign_RSA(sk->evp_pkey, rsa);
+    EVP_PKEY_assign(sk->evp_pkey, EVP_PKEY_RSA, rsa);
 
     if (pk != NULL) {
         if (pbrsa_publickey_recover(pk, sk) != 0) {
@@ -479,7 +479,7 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
     if (evp_pkey == NULL) {
         goto err;
     }
-    EVP_PKEY_assign_RSA(evp_pkey, pk2);
+    EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, pk2);
 
     mont_ctx = BN_MONT_CTX_new();
     if (mont_ctx == NULL) {
@@ -553,7 +553,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     }
 
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
-    if (evp_pkey == NULL || EVP_PKEY_assign_RSA(evp_pkey, sk2) != ERR_LIB_NONE) {
+    if (evp_pkey == NULL || EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE) {
         RSA_free(sk2);
         EVP_PKEY_free(evp_pkey);
         goto err;
@@ -564,7 +564,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     BIGNUM   *d2       = BN_new();
     RSA      *sk2      = RSA_new();
     EVP_PKEY *evp_pkey = EVP_PKEY_new();
-    if (evp_pkey == NULL || EVP_PKEY_assign_RSA(evp_pkey, sk2) != ERR_LIB_NONE ||
+    if (evp_pkey == NULL || EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE ||
         BN_mod_inverse(d2, e2, phi, bn_ctx) == NULL ||
         RSA_set0_factors(sk2, p, q) != ERR_LIB_NONE) {
         BN_free(sk2_n);
