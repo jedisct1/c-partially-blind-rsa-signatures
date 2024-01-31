@@ -542,8 +542,9 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     BIGNUM *p  = NULL;
     BIGNUM *q  = NULL;
     // defer
-    BIGNUM *n      = NULL;
-    BN_CTX *bn_ctx = NULL;
+    EVP_PKEY *evp_pkey = NULL;
+    BIGNUM   *n        = NULL;
+    BN_CTX   *bn_ctx   = NULL;
 
     if (pbrsa_derive_publickey_for_metadata(context, dpk, pk, metadata) != 0) {
         return -1;
@@ -580,7 +581,7 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
         goto err;
     }
 
-    EVP_PKEY *evp_pkey = EVP_PKEY_new();
+    evp_pkey = EVP_PKEY_new();
     if (evp_pkey == NULL || EVP_PKEY_up_ref(evp_pkey) != ERR_LIB_NONE ||
         EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE) {
         RSA_free(sk2);
@@ -588,10 +589,11 @@ pbrsa_derive_keypair_for_metadata(const PBRSAContext *context, PBRSASecretKey *d
     }
     dsk->evp_pkey = evp_pkey;
 #else
-    BIGNUM   *sk2_n    = _rsa_n(sk->evp_pkey);
-    BIGNUM   *d2       = BN_new();
-    RSA      *sk2      = RSA_new();
-    EVP_PKEY *evp_pkey = EVP_PKEY_new();
+    BIGNUM *sk2_n = _rsa_n(sk->evp_pkey);
+    BIGNUM *d2    = BN_new();
+    RSA    *sk2   = RSA_new();
+
+    evp_pkey = EVP_PKEY_new();
     if (evp_pkey == NULL || EVP_PKEY_up_ref(evp_pkey) != ERR_LIB_NONE ||
         EVP_PKEY_assign(evp_pkey, EVP_PKEY_RSA, sk2) != ERR_LIB_NONE ||
         BN_mod_inverse(d2, e2, phi, bn_ctx) == NULL ||
