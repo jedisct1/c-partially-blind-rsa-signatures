@@ -1,6 +1,6 @@
 # Partially blind RSA signatures
 
-This is an implementation of the [RSA Blind Signatures with Public Metadata](https://eprint.iacr.org/2023/1199) paper and [draft](https://www.ietf.org/archive/id/draft-amjad-cfrg-partially-blind-rsa-01.html), mechanically ported from [the Zig implementation](https://github.com/jedisct1/zig-rsa-blind-signatures).
+This is an implementation of the [RSA Blind Signatures with Public Metadata](https://eprint.iacr.org/2023/1199) paper and [draft](https://datatracker.ietf.org/doc/draft-amjad-cfrg-partially-blind-rsa/), mechanically ported from [the Zig implementation](https://github.com/jedisct1/zig-rsa-blind-signatures).
 
 ## Protocol overview
 
