@@ -487,6 +487,7 @@ pbrsa_derive_publickey_for_metadata(const PBRSAContext *context, PBRSAPublicKey 
         BN_free(e2);
         goto err;
     }
+    BN_free(e2);
 #else
     BIGNUM *e2 = BN_new();
     if (e2 == NULL || BN_bin2bn(exp_bytes, lambda_len, e2) == NULL) {
