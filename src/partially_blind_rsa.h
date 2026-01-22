@@ -10,8 +10,6 @@ extern "C" {
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
-#define PBRSA_DEFAULT_SALT_LENGTH ((size_t) -1)
-
 // Hash functions
 typedef enum PBRSAHashFunction {
     PBRSA_SHA256,
@@ -19,10 +17,23 @@ typedef enum PBRSAHashFunction {
     PBRSA_SHA512,
 } PBRSAHashFunction;
 
+// PSS mode: PSS uses hash-length salt, PSSZero uses no salt
+typedef enum PBRSAPSSMode {
+    PBRSA_PSS,      // Salt length = hash output length
+    PBRSA_PSS_ZERO, // Salt length = 0
+} PBRSAPSSMode;
+
+// Prepare mode: whether to randomize the message with a prefix
+typedef enum PBRSAPrepareMode {
+    PBRSA_RANDOMIZED,   // Add random prefix to message
+    PBRSA_DETERMINISTIC // No random prefix
+} PBRSAPrepareMode;
+
 // Context
 typedef struct PBRSAContext {
-    const EVP_MD *evp_md;
-    size_t        salt_len;
+    const EVP_MD   *evp_md;
+    size_t          salt_len;
+    PBRSAPrepareMode prepare_mode;
 } PBRSAContext;
 
 // Metadata
@@ -77,16 +88,29 @@ typedef struct PBRSAMessageRandomizer {
     uint8_t noise[32];
 } PBRSAMessageRandomizer;
 
-// Initialize a standard context for probabilistic padding (recommended for most applications)
+// Combined result from blinding operation
+typedef struct PBRSABlindingResult {
+    PBRSABlindMessage       blind_message;
+    PBRSABlindingSecret     secret;
+    PBRSAMessageRandomizer *msg_randomizer; // NULL if prepare_mode is deterministic
+} PBRSABlindingResult;
+
+// Initialize context for RSAPBSSA-SHA384-PSS-Randomized (default, recommended)
 void pbrsa_context_init_default(PBRSAContext *context) __attribute__((nonnull));
 
-// Initialize a context for deterministic padding
+// Initialize context for RSAPBSSA-SHA384-PSSZERO-Randomized
+void pbrsa_context_init_pss_zero_randomized(PBRSAContext *context) __attribute__((nonnull));
+
+// Initialize context for RSAPBSSA-SHA384-PSS-Deterministic
+void pbrsa_context_init_pss_deterministic(PBRSAContext *context) __attribute__((nonnull));
+
+// Initialize context for RSAPBSSA-SHA384-PSSZERO-Deterministic
 void pbrsa_context_init_deterministic(PBRSAContext *context) __attribute__((nonnull));
 
-// Initialize a context with custom parameters.
-// The salt length can be set to PBRSA_DEFAULT_SALT_LENGTH to match the hash function output size
+// Initialize a context with custom parameters
 int pbrsa_context_init_custom(PBRSAContext *context, PBRSAHashFunction hash_function,
-                              size_t salt_len) __attribute__((nonnull));
+                              PBRSAPSSMode pss_mode, PBRSAPrepareMode prepare_mode)
+    __attribute__((nonnull));
 
 // Generate a new key pair, and put the key pair into `sk` and a key with the public information
 // only into `pk`
@@ -143,7 +167,7 @@ void pbrsa_secretkey_deinit(PBRSASecretKey *sk);
 // Free the internal structures of a public key
 void pbrsa_publickey_deinit(PBRSAPublicKey *pk);
 
-// Free thel internal structures of a serialized key
+// Free the internal structures of a serialized key
 void pbrsa_serializedkey_deinit(PBRSASerializedKey *serialized);
 
 // Free the internal structures of a blind message
@@ -152,6 +176,9 @@ void pbrsa_blind_message_deinit(PBRSABlindMessage *blind_message);
 // Free the internal structures of a secret blinding factor
 void pbrsa_blinding_secret_deinit(PBRSABlindingSecret *secret);
 
+// Free the internal structures of a blinding result
+void pbrsa_blinding_result_deinit(PBRSABlindingResult *result);
+
 // Free the internal structures of a blind signature
 void pbrsa_blind_signature_deinit(PBRSABlindSignature *blind_sig);
 
@@ -159,22 +186,19 @@ void pbrsa_blind_signature_deinit(PBRSABlindSignature *blind_sig);
 void pbrsa_signature_deinit(PBRSASignature *blind_sig);
 
 // Generate a random message of length `msg_len`, blind it using the public
-// key `pk` and put the serialized blind message into `blind_message`, as well as
-// the secret blinding factor into `secret`.
+// key `pk` and put the result into `result`.
 // `metadata` can be `NULL`.
-int pbrsa_blind_message_generate(const PBRSAContext *context, PBRSABlindMessage *blind_message,
-                                 uint8_t *msg, size_t msg_len, PBRSABlindingSecret *secret,
-                                 PBRSAPublicKey *pk, const PBRSAMetadata *metadata)
-    __attribute__((nonnull(1, 2, 3, 5, 6)));
+int pbrsa_blind_message_generate(const PBRSAContext *context, PBRSABlindingResult *result,
+                                 uint8_t *msg, size_t msg_len, PBRSAPublicKey *pk,
+                                 const PBRSAMetadata *metadata) __attribute__((nonnull(1, 2, 3, 5)));
 
 // Blind a message `msg` of length `msg_len` bytes, using the public RSA key
-// `pk`, and put the serialized blind message into `blind_message`, as well as
-// the secret blinding factor into `secret`.
+// `pk`, and put the result into `result`. Message randomization is controlled
+// by the context's prepare_mode.
 // `metadata` can be `NULL`.
-int pbrsa_blind(const PBRSAContext *context, PBRSABlindMessage *blind_message,
-                PBRSABlindingSecret *secret, PBRSAMessageRandomizer *msg_randomizer,
-                PBRSAPublicKey *pk, const uint8_t *msg, size_t msg_len,
-                const PBRSAMetadata *metadata) __attribute__((nonnull(1, 2, 3, 5, 6)));
+int pbrsa_blind(const PBRSAContext *context, PBRSABlindingResult *result, PBRSAPublicKey *pk,
+                const uint8_t *msg, size_t msg_len, const PBRSAMetadata *metadata)
+    __attribute__((nonnull(1, 2, 3, 4)));
 
 // Compute a signature for a blind message `blind_message` of
 // length `blind_message_len` bytes using a key pair `sk`, and put the
@@ -183,14 +207,13 @@ int pbrsa_blind_sign(const PBRSAContext *context, PBRSABlindSignature *blind_sig
                      PBRSASecretKey *sk, const PBRSABlindMessage *blind_message)
     __attribute__((nonnull));
 
-// Compute a signature for a message `msg` given the signature `blind(msg, secret)`.
+// Compute a signature for a message `msg` given the blinding result.
 // The signature of `msg` is put into `sig`. Note that before returning, the function
 // automatically verifies that the new signature is valid for the given public key.
 int pbrsa_finalize(const PBRSAContext *context, PBRSASignature *sig,
-                   const PBRSABlindSignature *blind_sig, const PBRSABlindingSecret *secret_,
-                   const PBRSAMessageRandomizer *msg_randomizer, PBRSAPublicKey *pk,
-                   const uint8_t *msg, size_t msg_len, const PBRSAMetadata *metadata)
-    __attribute__((nonnull(1, 2, 3, 4, 6, 7)));
+                   const PBRSABlindSignature *blind_sig, const PBRSABlindingResult *blinding_result,
+                   PBRSAPublicKey *pk, const uint8_t *msg, size_t msg_len,
+                   const PBRSAMetadata *metadata) __attribute__((nonnull(1, 2, 3, 4, 5, 6)));
 
 // Verify a non-blind signature `sig` for a message `msg` of length `msg_len` using the public key
 // `pk`. The function returns `0` if the signature if valid, and `-1` on error.

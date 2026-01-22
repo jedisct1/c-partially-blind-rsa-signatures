@@ -31,9 +31,9 @@ This implementation requires OpenSSL (1.1.x or 3.x.y) or BoringSSL.
 ## Usage
 
 ```c
-    #include <blind_rsa.h>
+    #include <partially_blind_rsa.h>
 
-    // Initialize a context with the default parameters
+    // Initialize a context with the default parameters (RSAPBSSA-SHA384-PSS-Randomized)
     PBRSAContext context;
     pbrsa_context_init_default(&context);
 
@@ -43,35 +43,29 @@ This implementation requires OpenSSL (1.1.x or 3.x.y) or BoringSSL.
     PBRSAPublicKey pk;
     assert(pbrsa_keypair_generate(&sk, &pk, 2048) == 0);
 
-    // Noise is not required if the message is random.
-    // If it is not NULL, it will be automatically filled by brsa_blind_sign().
-    PBRSAMessageRandomizer *msg_randomizer = NULL;
-
     // Metadata
     PBRSAMetadata metadata;
     metadata.metadata     = (uint8_t *) "metadata";
-    metadata.metadata_len = strlen((const char *) metadata.metadata);    
+    metadata.metadata_len = strlen((const char *) metadata.metadata);
 
     // Derive a key pair for the metadata
     // The client can derive the public key on its own using `pbrsa_derive_publickey_for_metadata()`
     PBRSASecretKey dsk;
     PBRSAPublicKey dpk;
-    assert(pbrsa_derive_keypair_for_metadata(&context, &dsk, &dpk, &sk, &pk, &metadata) == 0);    
+    assert(pbrsa_derive_keypair_for_metadata(&context, &dsk, &dpk, &sk, &pk, &metadata) == 0);
 
-    // [CLIENT]: create a random message and blind it for the server whose public key is `pk`.
-    // The client must store the message and the secret.
+    // [CLIENT]: create a random message and blind it for the server whose public key is `dpk`.
+    // The client must store the message and the blinding result.
     uint8_t             msg[32];
     const size_t        msg_len = sizeof msg;
-    PBRSABlindMessage   blind_msg;
-    PBRSABlindingSecret client_secret;
-    assert(pbrsa_blind_message_generate(&context, &blind_msg, msg, msg_len, &client_secret, &dpk,
+    PBRSABlindingResult blinding_result;
+    assert(pbrsa_blind_message_generate(&context, &blinding_result, msg, msg_len, &dpk,
                                         &metadata) == 0);
 
     // [SERVER]: compute a signature for a blind message, to be sent to the client.
     // The client secret should not be sent to the server.
     PBRSABlindSignature blind_sig;
-    assert(pbrsa_blind_sign(&context, &blind_sig, &dsk, &blind_msg) == 0);
-    pbrsa_blind_message_deinit(&blind_msg);
+    assert(pbrsa_blind_sign(&context, &blind_sig, &dsk, &blinding_result.blind_message) == 0);
 
     // [CLIENT]: later, when the client wants to redeem a signed blind message,
     // using the blinding secret, it can locally compute the signature of the
@@ -81,38 +75,43 @@ This implementation requires OpenSSL (1.1.x or 3.x.y) or BoringSSL.
     // Note that the finalization function also verifies that the signature is
     // correct for the server public key.
     PBRSASignature sig;
-    assert(pbrsa_finalize(&context, &sig, &blind_sig, &client_secret, msg_randomizer, &dpk, msg,
-                          msg_len, &metadata) == 0);
+    assert(pbrsa_finalize(&context, &sig, &blind_sig, &blinding_result, &dpk, msg, msg_len,
+                          &metadata) == 0);
     pbrsa_blind_signature_deinit(&blind_sig);
-    pbrsa_blinding_secret_deinit(&client_secret);
 
     // [SERVER]: a non-blind signature can be verified using the server's public key.
-    assert(pbrsa_verify(&context, &sig, &dpk, msg_randomizer, msg, msg_len, &metadata) == 0);
+    assert(pbrsa_verify(&context, &sig, &dpk, blinding_result.msg_randomizer, msg, msg_len,
+                        &metadata) == 0);
     pbrsa_signature_deinit(&sig);
 
+    pbrsa_blinding_result_deinit(&blinding_result);
     pbrsa_secretkey_deinit(&dsk);
     pbrsa_publickey_deinit(&dpk);
     pbrsa_secretkey_deinit(&sk);
     pbrsa_publickey_deinit(&pk);
 ```
 
-Deterministic padding is also supported, by creating a context with `pbrsa_context_init_deterministic()`:
+Different padding and prepare modes are supported:
 
 ```c
-    // Initialize a context to use deterministic padding
-    PBRSAContext context;
+    // RSAPBSSA-SHA384-PSSZERO-Randomized
+    pbrsa_context_init_pss_zero_randomized(&context);
+
+    // RSAPBSSA-SHA384-PSS-Deterministic
+    pbrsa_context_init_pss_deterministic(&context);
+
+    // RSAPBSSA-SHA384-PSSZERO-Deterministic
     pbrsa_context_init_deterministic(&context);
 ```
 
-Most applications should use the default (probabilistic) mode instead.
+Most applications should use the default (RSAPBSSA-SHA384-PSS-Randomized) mode.
 
-A custom hash function and salt length can also be specified with `pbrsa_context_init_custom()`:
+A custom hash function, PSS mode, and prepare mode can also be specified with `pbrsa_context_init_custom()`:
 
 ```c
-    // Initialize a context with SHA-256 as a Hash and MGF function,
-    // and a 48 byte salt.
+    // Initialize a context with SHA-256, PSS mode, and deterministic message preparation
     PBRSAContext context;
-    pbrsa_context_init_custom(&context, PBRSA_SHA256, 48);
+    pbrsa_context_init_custom(&context, PBRSA_SHA256, PBRSA_PSS, PBRSA_DETERMINISTIC);
 ```
 
 Some additional helper functions for key management are included:

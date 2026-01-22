@@ -23,10 +23,6 @@ test_default(void)
     PBRSAPublicKey pk;
     assert(pbrsa_keypair_generate(&sk, &pk, 2048) == 0);
 
-    // Noise is not required if the message is random.
-    // If it is not NULL, it will be automatically filled by brsa_blind_sign().
-    PBRSAMessageRandomizer *msg_randomizer = NULL;
-
     // Metadata
     PBRSAMetadata metadata;
     metadata.metadata     = (uint8_t *) "metadata";
@@ -39,19 +35,17 @@ test_default(void)
     assert(pbrsa_derive_keypair_for_metadata(&context, &dsk, &dpk, &sk, &pk, &metadata) == 0);
 
     // [CLIENT]: create a random message and blind it for the server whose public key is `dpk`.
-    // The client must store the message and the secret.
-    uint8_t             msg[32];
-    const size_t        msg_len = sizeof msg;
-    PBRSABlindMessage   blind_msg;
-    PBRSABlindingSecret client_secret;
-    assert(pbrsa_blind_message_generate(&context, &blind_msg, msg, msg_len, &client_secret, &dpk,
+    // The client must store the message and the blinding result.
+    uint8_t            msg[32];
+    const size_t       msg_len = sizeof msg;
+    PBRSABlindingResult blinding_result;
+    assert(pbrsa_blind_message_generate(&context, &blinding_result, msg, msg_len, &dpk,
                                         &metadata) == 0);
 
     // [SERVER]: compute a signature for a blind message, to be sent to the client.
     // The client secret should not be sent to the server.
     PBRSABlindSignature blind_sig;
-    assert(pbrsa_blind_sign(&context, &blind_sig, &dsk, &blind_msg) == 0);
-    pbrsa_blind_message_deinit(&blind_msg);
+    assert(pbrsa_blind_sign(&context, &blind_sig, &dsk, &blinding_result.blind_message) == 0);
 
     // [CLIENT]: later, when the client wants to redeem a signed blind message,
     // using the blinding secret, it can locally compute the signature of the
@@ -61,15 +55,16 @@ test_default(void)
     // Note that the finalization function also verifies that the signature is
     // correct for the server public key.
     PBRSASignature sig;
-    assert(pbrsa_finalize(&context, &sig, &blind_sig, &client_secret, msg_randomizer, &dpk, msg,
-                          msg_len, &metadata) == 0);
+    assert(pbrsa_finalize(&context, &sig, &blind_sig, &blinding_result, &dpk, msg, msg_len,
+                          &metadata) == 0);
     pbrsa_blind_signature_deinit(&blind_sig);
-    pbrsa_blinding_secret_deinit(&client_secret);
 
     // [SERVER]: a non-blind signature can be verified using the server's public key.
-    assert(pbrsa_verify(&context, &sig, &dpk, msg_randomizer, msg, msg_len, &metadata) == 0);
+    assert(pbrsa_verify(&context, &sig, &dpk, blinding_result.msg_randomizer, msg, msg_len,
+                        &metadata) == 0);
     pbrsa_signature_deinit(&sig);
 
+    pbrsa_blinding_result_deinit(&blinding_result);
     pbrsa_secretkey_deinit(&dsk);
     pbrsa_publickey_deinit(&dpk);
     pbrsa_secretkey_deinit(&sk);

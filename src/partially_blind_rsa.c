@@ -121,7 +121,6 @@ new_mont_domain(const BIGNUM *n)
     return mont_ctx;
 }
 
-#if defined(OPENSSL_IS_BORINGSSL) && defined(ALLOW_NONSTANDARD_EXPONENT)
 typedef struct CrtParams {
     BIGNUM *dmp1;
     BIGNUM *dmq1;
@@ -218,22 +217,34 @@ crtparams_free(CrtParams *crt_params)
     BN_free(crt_params->iqmp);
     crt_params->iqmp = NULL;
 }
-#endif
 
 void
 pbrsa_context_init_default(PBRSAContext *context)
 {
-    pbrsa_context_init_custom(context, PBRSA_SHA384, PBRSA_DEFAULT_SALT_LENGTH);
+    pbrsa_context_init_custom(context, PBRSA_SHA384, PBRSA_PSS, PBRSA_RANDOMIZED);
+}
+
+void
+pbrsa_context_init_pss_zero_randomized(PBRSAContext *context)
+{
+    pbrsa_context_init_custom(context, PBRSA_SHA384, PBRSA_PSS_ZERO, PBRSA_RANDOMIZED);
+}
+
+void
+pbrsa_context_init_pss_deterministic(PBRSAContext *context)
+{
+    pbrsa_context_init_custom(context, PBRSA_SHA384, PBRSA_PSS, PBRSA_DETERMINISTIC);
 }
 
 void
 pbrsa_context_init_deterministic(PBRSAContext *context)
 {
-    pbrsa_context_init_custom(context, PBRSA_SHA384, 0);
+    pbrsa_context_init_custom(context, PBRSA_SHA384, PBRSA_PSS_ZERO, PBRSA_DETERMINISTIC);
 }
 
 int
-pbrsa_context_init_custom(PBRSAContext *context, PBRSAHashFunction hash_function, size_t salt_len)
+pbrsa_context_init_custom(PBRSAContext *context, PBRSAHashFunction hash_function,
+                          PBRSAPSSMode pss_mode, PBRSAPrepareMode prepare_mode)
 {
     const EVP_MD *evp_md;
 
@@ -250,11 +261,17 @@ pbrsa_context_init_custom(PBRSAContext *context, PBRSAHashFunction hash_function
     default:
         return -1;
     }
-    context->evp_md = evp_md;
-    if (salt_len == PBRSA_DEFAULT_SALT_LENGTH) {
+    context->evp_md       = evp_md;
+    context->prepare_mode = prepare_mode;
+    switch (pss_mode) {
+    case PBRSA_PSS:
         context->salt_len = (size_t) EVP_MD_size(evp_md);
-    } else {
-        context->salt_len = salt_len;
+        break;
+    case PBRSA_PSS_ZERO:
+        context->salt_len = 0;
+        break;
+    default:
+        return -1;
     }
     return 0;
 }
@@ -357,7 +374,6 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
         goto err;
     }
 
-#if defined(OPENSSL_IS_BORINGSSL) && defined(ALLOW_NONSTANDARD_EXPONENT)
     CrtParams crt_params;
     if (crtparams_compute(bn_ctx, &crt_params, p, q, d) != 0) {
         goto err;
@@ -367,7 +383,6 @@ pbrsa_keypair_generate(PBRSASecretKey *sk, PBRSAPublicKey *pk, int modulus_bits)
         crtparams_free(&crt_params);
         goto err;
     }
-#endif
 
     if (RSA_set0_key(rsa, n, e, d) != ERR_LIB_NONE) {
         goto err;
@@ -812,6 +827,17 @@ pbrsa_blinding_secret_deinit(PBRSABlindingSecret *secret)
     secret->secret = NULL;
 }
 
+void
+pbrsa_blinding_result_deinit(PBRSABlindingResult *result)
+{
+    pbrsa_blind_message_deinit(&result->blind_message);
+    pbrsa_blinding_secret_deinit(&result->secret);
+    if (result->msg_randomizer != NULL) {
+        OPENSSL_clear_free(result->msg_randomizer, sizeof(PBRSAMessageRandomizer));
+        result->msg_randomizer = NULL;
+    }
+}
+
 static int
 pbrsa_blinding_secret_init(PBRSABlindingSecret *secret, size_t modulus_bytes)
 {
@@ -1034,8 +1060,7 @@ _check_canonical(const PBRSASecretKey *sk, const PBRSABlindMessage *blind_messag
 }
 
 int
-pbrsa_blind(const PBRSAContext *context, PBRSABlindMessage *blind_message,
-            PBRSABlindingSecret *secret, PBRSAMessageRandomizer *msg_randomizer, PBRSAPublicKey *pk,
+pbrsa_blind(const PBRSAContext *context, PBRSABlindingResult *result, PBRSAPublicKey *pk,
             const uint8_t *msg, size_t msg_len, const PBRSAMetadata *metadata)
 {
     if (_rsa_parameters_check(pk->evp_pkey) != 0) {
@@ -1043,17 +1068,31 @@ pbrsa_blind(const PBRSAContext *context, PBRSABlindMessage *blind_message,
     }
     const size_t modulus_bytes = _rsa_size(pk->evp_pkey);
 
-    // Compute H(msg)
+    // Initialize result
+    result->blind_message.blind_message     = NULL;
+    result->blind_message.blind_message_len = 0;
+    result->secret.secret                   = NULL;
+    result->secret.secret_len               = 0;
+    result->msg_randomizer                  = NULL;
 
-    if (msg_randomizer != NULL) {
-        if (RAND_bytes(msg_randomizer->noise, sizeof msg_randomizer->noise) != ERR_LIB_NONE) {
+    // Handle message randomization based on prepare_mode
+    PBRSAMessageRandomizer *msg_randomizer = NULL;
+    if (context->prepare_mode == PBRSA_RANDOMIZED) {
+        msg_randomizer = OPENSSL_malloc(sizeof(PBRSAMessageRandomizer));
+        if (msg_randomizer == NULL) {
             return -1;
         }
+        if (RAND_bytes(msg_randomizer->noise, sizeof msg_randomizer->noise) != ERR_LIB_NONE) {
+            OPENSSL_free(msg_randomizer);
+            return -1;
+        }
+        result->msg_randomizer = msg_randomizer;
     }
 
     uint8_t msg_hash[MAX_HASH_DIGEST_LENGTH];
     if (_hash(context->evp_md, msg_randomizer, msg_hash, sizeof msg_hash, msg, msg_len, metadata) !=
         0) {
+        pbrsa_blinding_result_deinit(result);
         return -1;
     }
 
@@ -1062,12 +1101,15 @@ pbrsa_blind(const PBRSAContext *context, PBRSABlindMessage *blind_message,
     const size_t padded_len = modulus_bytes;
     uint8_t     *padded     = OPENSSL_malloc(padded_len);
     if (padded == NULL) {
+        pbrsa_blinding_result_deinit(result);
         return -1;
     }
 
     const EVP_MD *evp_md = context->evp_md;
     if (RSA_padding_add_PKCS1_PSS_mgf1((RSA *) EVP_PKEY_get0_RSA(pk->evp_pkey), padded, msg_hash,
                                        evp_md, evp_md, context->salt_len) != ERR_LIB_NONE) {
+        OPENSSL_clear_free(padded, padded_len);
+        pbrsa_blinding_result_deinit(result);
         return -1;
     }
     OPENSSL_cleanse(msg_hash, sizeof msg_hash);
@@ -1076,28 +1118,34 @@ pbrsa_blind(const PBRSAContext *context, PBRSABlindMessage *blind_message,
 
     BN_CTX *bn_ctx = BN_CTX_new();
     if (bn_ctx == NULL) {
+        OPENSSL_clear_free(padded, padded_len);
+        pbrsa_blinding_result_deinit(result);
         return -1;
     }
     BN_CTX_start(bn_ctx);
 
-    const int ret = _blind(blind_message, secret, pk, bn_ctx, padded, padded_len);
+    const int ret =
+        _blind(&result->blind_message, &result->secret, pk, bn_ctx, padded, padded_len);
 
     BN_CTX_end(bn_ctx);
     BN_CTX_free(bn_ctx);
     OPENSSL_clear_free(padded, padded_len);
 
+    if (ret != 0) {
+        pbrsa_blinding_result_deinit(result);
+    }
+
     return ret;
 }
 
 int
-pbrsa_blind_message_generate(const PBRSAContext *context, PBRSABlindMessage *blind_message,
-                             uint8_t *msg, size_t msg_len, PBRSABlindingSecret *secret,
-                             PBRSAPublicKey *pk, const PBRSAMetadata *metadata)
+pbrsa_blind_message_generate(const PBRSAContext *context, PBRSABlindingResult *result, uint8_t *msg,
+                             size_t msg_len, PBRSAPublicKey *pk, const PBRSAMetadata *metadata)
 {
     if (RAND_bytes(msg, msg_len) != ERR_LIB_NONE) {
         return -1;
     }
-    return pbrsa_blind(context, blind_message, secret, NULL, pk, msg, msg_len, metadata);
+    return pbrsa_blind(context, result, pk, msg, msg_len, metadata);
 }
 
 int
@@ -1209,15 +1257,15 @@ _finalize(const PBRSAContext *context, PBRSASignature *sig, const PBRSABlindSign
 
 int
 pbrsa_finalize(const PBRSAContext *context, PBRSASignature *sig,
-               const PBRSABlindSignature *blind_sig, const PBRSABlindingSecret *secret,
-               const PBRSAMessageRandomizer *msg_randomizer, PBRSAPublicKey *pk, const uint8_t *msg,
-               size_t msg_len, const PBRSAMetadata *metadata)
+               const PBRSABlindSignature *blind_sig, const PBRSABlindingResult *blinding_result,
+               PBRSAPublicKey *pk, const uint8_t *msg, size_t msg_len, const PBRSAMetadata *metadata)
 {
     if (_rsa_parameters_check(pk->evp_pkey) != 0) {
         return -1;
     }
     const size_t modulus_bytes = _rsa_size(pk->evp_pkey);
-    if (blind_sig->blind_sig_len != modulus_bytes || secret->secret_len != modulus_bytes) {
+    if (blind_sig->blind_sig_len != modulus_bytes ||
+        blinding_result->secret.secret_len != modulus_bytes) {
         ERR_put_error(ERR_LIB_RSA, 0, RSA_R_DATA_TOO_LARGE_FOR_MODULUS, __FILE__, __LINE__);
         return -1;
     }
@@ -1228,8 +1276,8 @@ pbrsa_finalize(const PBRSAContext *context, PBRSASignature *sig,
     }
     BN_CTX_start(bn_ctx);
 
-    const int ret = _finalize(context, sig, blind_sig, secret, msg_randomizer, pk, bn_ctx, msg,
-                              msg_len, metadata);
+    const int ret = _finalize(context, sig, blind_sig, &blinding_result->secret,
+                              blinding_result->msg_randomizer, pk, bn_ctx, msg, msg_len, metadata);
 
     BN_CTX_end(bn_ctx);
     BN_CTX_free(bn_ctx);
