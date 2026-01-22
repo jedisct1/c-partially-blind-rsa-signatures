@@ -4,17 +4,14 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib_options = b.addOptions();
     const with_boringssl = b.option([]const u8, "with-boringssl", "Path to BoringSSL install") orelse "";
-    lib_options.addOption([]const u8, "with-boringssl", with_boringssl);
 
-    const lib = b.addStaticLibrary(.{
-        .name = "pbrsa",
+    const lib_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
-    lib.linkLibC();
     if (with_boringssl.len > 0) {
         var buf_include: [std.posix.PATH_MAX]u8 = undefined;
         var buf_include_alloc = std.heap.FixedBufferAllocator.init(&buf_include);
@@ -24,48 +21,53 @@ pub fn build(b: *std.Build) !void {
         var buf_lib_alloc = std.heap.FixedBufferAllocator.init(&buf_lib);
         const path_lib = try std.fs.path.join(buf_lib_alloc.allocator(), &.{ with_boringssl, "lib" });
 
-        lib.addIncludePath(b.path(path_include));
-        lib.addLibraryPath(b.path(path_lib));
+        lib_module.addIncludePath(b.path(path_include));
+        lib_module.addLibraryPath(b.path(path_lib));
     } else {
-        lib.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/include" });
-        lib.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/lib" });
+        lib_module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/include" });
+        lib_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/lib" });
     }
-    lib.linkSystemLibrary("crypto");
+    lib_module.linkSystemLibrary("crypto", .{});
 
-    const lib_source_files = &.{"src/partially_blind_rsa.c"};
+    lib_module.addCSourceFiles(.{ .files = &.{"src/partially_blind_rsa.c"} });
 
-    lib.addCSourceFiles(.{ .files = lib_source_files });
+    const lib = b.addLibrary(.{
+        .name = "pbrsa",
+        .root_module = lib_module,
+    });
     b.installArtifact(lib);
 
-    const exe_source_files = &.{"src/test_partially_blind_rsa.c"};
+    const exe_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    if (with_boringssl.len > 0) {
+        var buf_include: [std.posix.PATH_MAX]u8 = undefined;
+        var buf_include_alloc = std.heap.FixedBufferAllocator.init(&buf_include);
+        const path_include = try std.fs.path.join(buf_include_alloc.allocator(), &.{ with_boringssl, "include" });
+
+        var buf_lib: [std.posix.PATH_MAX]u8 = undefined;
+        var buf_lib_alloc = std.heap.FixedBufferAllocator.init(&buf_lib);
+        const path_lib = try std.fs.path.join(buf_lib_alloc.allocator(), &.{ with_boringssl, "lib" });
+
+        exe_module.addIncludePath(b.path(path_include));
+        exe_module.addLibraryPath(b.path(path_lib));
+    } else {
+        exe_module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/include" });
+        exe_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/lib" });
+    }
+
+    exe_module.addCSourceFiles(.{ .files = &.{"src/test_partially_blind_rsa.c"} });
+    exe_module.linkLibrary(lib);
 
     const exe = b.addExecutable(.{
         .name = "c-partially-blind-rsa-signatures",
-        .target = target,
-        .optimize = optimize,
+        .root_module = exe_module,
     });
 
-    if (with_boringssl.len > 0) {
-        var buf_include: [std.posix.PATH_MAX]u8 = undefined;
-        var buf_include_alloc = std.heap.FixedBufferAllocator.init(&buf_include);
-        const path_include = try std.fs.path.join(buf_include_alloc.allocator(), &.{ with_boringssl, "include" });
-
-        var buf_lib: [std.posix.PATH_MAX]u8 = undefined;
-        var buf_lib_alloc = std.heap.FixedBufferAllocator.init(&buf_lib);
-        const path_lib = try std.fs.path.join(buf_lib_alloc.allocator(), &.{ with_boringssl, "lib" });
-
-        exe.addIncludePath(b.path(path_include));
-        exe.addLibraryPath(b.path(path_lib));
-    } else {
-        lib.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/include" });
-        lib.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/openssl@3/lib" });
-    }
-    exe.addCSourceFiles(.{ .files = exe_source_files });
-    exe.linkLibrary(lib);
-    exe.linkLibC();
-
     const run_cmd = b.addRunArtifact(exe);
-
     run_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| {
