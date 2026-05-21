@@ -1183,6 +1183,10 @@ rsassa_pss_verify(const PBRSAContext *context, const PBRSASignature *sig, PBRSAP
         ERR_put_error(ERR_LIB_RSA, 0, RSA_R_DATA_TOO_LARGE_FOR_MODULUS, __FILE__, __LINE__);
         return -1;
     }
+    if ((msg_randomizer != NULL) != (context->prepare_mode == PBRSA_RANDOMIZED)) {
+        ERR_put_error(ERR_LIB_RSA, 0, RSA_R_INVALID_PADDING_MODE, __FILE__, __LINE__);
+        return -1;
+    }
 
     uint8_t msg_hash[MAX_HASH_DIGEST_LENGTH];
     if (_hash(context->evp_md, msg_randomizer, msg_hash, sizeof msg_hash, msg, msg_len, metadata) !=

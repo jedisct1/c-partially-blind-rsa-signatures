@@ -71,10 +71,88 @@ test_default(void)
     pbrsa_publickey_deinit(&pk);
 }
 
+static void
+test_verifier_enforces_prepare_mode(void)
+{
+    PBRSASecretKey sk;
+    PBRSAPublicKey pk;
+    assert(pbrsa_keypair_generate(&sk, &pk, 2048) == 0);
+
+    PBRSAMetadata metadata;
+    metadata.metadata     = (uint8_t *) "metadata";
+    metadata.metadata_len = strlen((const char *) metadata.metadata);
+
+    const uint8_t msg[]   = "Hello, World!";
+    const size_t  msg_len = sizeof msg - 1;
+
+    PBRSAContext randomized_ctx;
+    pbrsa_context_init_default(&randomized_ctx);
+    PBRSASecretKey rand_dsk;
+    PBRSAPublicKey rand_dpk;
+    assert(pbrsa_derive_keypair_for_metadata(&randomized_ctx, &rand_dsk, &rand_dpk, &sk, &pk,
+                                             &metadata) == 0);
+    PBRSABlindingResult randomized_br;
+    assert(pbrsa_blind(&randomized_ctx, &randomized_br, &rand_dpk, msg, msg_len, &metadata) == 0);
+    assert(randomized_br.msg_randomizer != NULL);
+    PBRSABlindSignature randomized_blind_sig;
+    assert(pbrsa_blind_sign(&randomized_ctx, &randomized_blind_sig, &rand_dsk,
+                            &randomized_br.blind_message) == 0);
+    PBRSASignature randomized_sig;
+    assert(pbrsa_finalize(&randomized_ctx, &randomized_sig, &randomized_blind_sig, &randomized_br,
+                          &rand_dpk, msg, msg_len, &metadata) == 0);
+    pbrsa_blind_signature_deinit(&randomized_blind_sig);
+
+    PBRSAContext deterministic_ctx;
+    pbrsa_context_init_deterministic(&deterministic_ctx);
+    PBRSASecretKey det_dsk;
+    PBRSAPublicKey det_dpk;
+    assert(pbrsa_derive_keypair_for_metadata(&deterministic_ctx, &det_dsk, &det_dpk, &sk, &pk,
+                                             &metadata) == 0);
+    PBRSABlindingResult deterministic_br;
+    assert(pbrsa_blind(&deterministic_ctx, &deterministic_br, &det_dpk, msg, msg_len, &metadata) ==
+           0);
+    assert(deterministic_br.msg_randomizer == NULL);
+    PBRSABlindSignature deterministic_blind_sig;
+    assert(pbrsa_blind_sign(&deterministic_ctx, &deterministic_blind_sig, &det_dsk,
+                            &deterministic_br.blind_message) == 0);
+    PBRSASignature deterministic_sig;
+    assert(pbrsa_finalize(&deterministic_ctx, &deterministic_sig, &deterministic_blind_sig,
+                          &deterministic_br, &det_dpk, msg, msg_len, &metadata) == 0);
+    pbrsa_blind_signature_deinit(&deterministic_blind_sig);
+
+    // A deterministic verifier must reject a randomized-mode signature, even when handed the
+    // matching randomizer.
+    assert(pbrsa_verify(&deterministic_ctx, &randomized_sig, &rand_dpk, randomized_br.msg_randomizer,
+                        msg, msg_len, &metadata) == -1);
+
+    // A randomized verifier must reject a deterministic-mode signature when no randomizer is
+    // supplied — without the mode check, this would fail open.
+    assert(pbrsa_verify(&randomized_ctx, &deterministic_sig, &det_dpk, NULL, msg, msg_len,
+                        &metadata) == -1);
+
+    // Sanity: each signature still verifies under its own mode with the matching randomizer.
+    assert(pbrsa_verify(&randomized_ctx, &randomized_sig, &rand_dpk, randomized_br.msg_randomizer,
+                        msg, msg_len, &metadata) == 0);
+    assert(pbrsa_verify(&deterministic_ctx, &deterministic_sig, &det_dpk, NULL, msg, msg_len,
+                        &metadata) == 0);
+
+    pbrsa_signature_deinit(&randomized_sig);
+    pbrsa_signature_deinit(&deterministic_sig);
+    pbrsa_blinding_result_deinit(&randomized_br);
+    pbrsa_blinding_result_deinit(&deterministic_br);
+    pbrsa_secretkey_deinit(&rand_dsk);
+    pbrsa_publickey_deinit(&rand_dpk);
+    pbrsa_secretkey_deinit(&det_dsk);
+    pbrsa_publickey_deinit(&det_dpk);
+    pbrsa_secretkey_deinit(&sk);
+    pbrsa_publickey_deinit(&pk);
+}
+
 int
 main(void)
 {
     test_default();
+    test_verifier_enforces_prepare_mode();
 
     return 0;
 }
